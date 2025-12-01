@@ -7,7 +7,7 @@ import chalk from "chalk"
 
 import { getCredentials } from "./config.js"
 import { createAuthorization, getConsoles, getGameHashes } from "./api.js"
-import { scanDirectory, listRomFiles, suggestConsole } from "./scanner.js"
+import { scanDirectory, listRomFiles } from "./scanner.js"
 import {
   displayResults,
   displayHeader,
@@ -71,10 +71,7 @@ async function main() {
       process.exit(1)
     }
 
-    // Step 4: Suggest console based on folder name and ROM extensions
-    const suggestedConsole = suggestConsole(romDirectory, romFiles, consoles)
-
-    // Step 5: Select console
+    // Step 4: Select console
     let selectedConsole
 
     if (options.system) {
@@ -86,47 +83,8 @@ async function main() {
         displayError(`System ID ${systemId} not found`)
         process.exit(1)
       }
-    } else if (suggestedConsole) {
-      // Show suggestion with y/n confirmation
-      console.log(
-        chalk.yellow(
-          `💡 Suggested console based on folder name and ROM extensions: ${suggestedConsole.name} (ID: ${suggestedConsole.id})\n`
-        )
-      )
-
-      const confirmAnswer = await inquirer.prompt([
-        {
-          type: "confirm",
-          name: "useSuggested",
-          message: `Use ${suggestedConsole.name}?`,
-          default: true,
-        },
-      ])
-
-      if (confirmAnswer.useSuggested) {
-        selectedConsole = suggestedConsole
-      } else {
-        // Show full selection list
-        const choices = consoles.map((c) => ({
-          name: `${c.name} (ID: ${c.id})`,
-          value: c,
-        }))
-
-        const answer = await inquirer.prompt([
-          {
-            type: "list",
-            name: "console",
-            message: "Select the system for your ROMs:",
-            choices,
-            pageSize: 15,
-            loop: false,
-          },
-        ])
-
-        selectedConsole = answer.console
-      }
     } else {
-      // No suggestion available, show full selection list
+      // Show selection list
       const choices = consoles.map((c) => ({
         name: `${c.name} (ID: ${c.id})`,
         value: c,
