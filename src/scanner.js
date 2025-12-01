@@ -597,8 +597,12 @@ async function extractROMsFrom7z(archivePath) {
       )
     }
 
+    // Set Seven["7zPath"] so node-7z library can use it internally
+    // This prevents "path argument must be of type string, received undefined" errors
+    Seven["7zPath"] = sevenZipPath
+
     // List archive contents first
-    const listOptions = sevenZipPath ? { $bin: sevenZipPath } : {}
+    const listOptions = { $bin: sevenZipPath }
     const myStream = Seven.list(archivePath, listOptions)
     const entries = []
 
@@ -628,6 +632,7 @@ async function extractROMsFrom7z(archivePath) {
       $bin: sevenZipPath,
       $raw: romFileNames,
     })
+    // Note: Seven["7zPath"] is already set above
 
     await new Promise((resolve, reject) => {
       extractStream.on("end", resolve)
@@ -1109,6 +1114,10 @@ export async function listRomFiles(directory) {
         // For 7Z, use node-7z to list contents
         try {
           const sevenZipPath = await get7zipPath()
+          if (sevenZipPath) {
+            // Set Seven["7zPath"] so node-7z library can use it internally
+            Seven["7zPath"] = sevenZipPath
+          }
           const listOptions = sevenZipPath ? { $bin: sevenZipPath } : {}
           const myStream = Seven.list(archivePath, listOptions)
           const entries = []
