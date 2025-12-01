@@ -670,7 +670,11 @@ async function extractROMsFrom7z(archivePath) {
     return extractedFiles
   } catch (error) {
     // Clean up on error
-    fs.rmSync(tempDir, { recursive: true, force: true }).catch(() => {})
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch (cleanupErr) {
+      // Ignore cleanup errors
+    }
     throw new Error(`Failed to extract 7Z archive: ${error.message}`)
   }
 }
@@ -713,7 +717,11 @@ async function extractROMsFromRar(archivePath) {
     return extractedFiles
   } catch (error) {
     // Clean up on error
-    fs.rmSync(tempDir, { recursive: true, force: true }).catch(() => {})
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch (cleanupErr) {
+      // Ignore cleanup errors
+    }
     throw new Error(`Failed to extract RAR archive: ${error.message}`)
   }
 }
