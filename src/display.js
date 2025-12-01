@@ -16,11 +16,11 @@ export function displayResults(results, options = {}) {
   const errors = results.filter((r) => r.error)
 
   console.log("\n")
-  console.log(chalk.bold.cyan("━".repeat(70)))
+  console.log(chalk.bold.cyan("━".repeat(145)))
   console.log(
     chalk.bold.cyan(`  🎮 RetroAchievements Hash Report - ${consoleName}`)
   )
-  console.log(chalk.bold.cyan("━".repeat(70)))
+  console.log(chalk.bold.cyan("━".repeat(145)))
   console.log("\n")
 
   // Create table
@@ -31,7 +31,7 @@ export function displayResults(results, options = {}) {
       chalk.bold.white("Achievements"),
       chalk.bold.white("Game URL"),
     ],
-    colWidths: [40, 35, 12, 40],
+    colWidths: [40, 35, 12, 50],
     style: {
       head: [],
       border: ["gray"],
