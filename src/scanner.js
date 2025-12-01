@@ -109,6 +109,58 @@ function isRomOrArchiveFile(filename) {
 }
 
 /**
+ * Recursively find all ROM and archive files in a directory
+ * @param {string} directory - Directory path to scan
+ * @returns {Array<{filename: string, filePath: string, relativePath: string}>} Array of file info objects
+ */
+function findRomAndArchiveFiles(directory) {
+  const results = []
+  const basePath = path.resolve(directory)
+
+  function scanRecursive(dir, relativeBase = "") {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        const relativePath = relativeBase
+          ? path.join(relativeBase, entry.name)
+          : entry.name
+
+        try {
+          if (entry.isDirectory()) {
+            // Recursively scan subdirectories
+            scanRecursive(fullPath, relativePath)
+          } else if (entry.isFile()) {
+            // Check if it's a ROM or archive file
+            if (isRomFile(entry.name) || isArchiveFile(entry.name)) {
+              results.push({
+                filename: entry.name,
+                filePath: fullPath,
+                relativePath: relativePath,
+              })
+            }
+          }
+        } catch (err) {
+          // Skip files/directories we can't access
+          if (process.env.DEBUG) {
+            console.error(`[DEBUG] Skipping ${fullPath}: ${err.message}`)
+          }
+        }
+      }
+    } catch (err) {
+      // Skip directories we can't read
+      if (process.env.DEBUG) {
+        console.error(`[DEBUG] Cannot read directory ${dir}: ${err.message}`)
+      }
+    }
+  }
+
+  scanRecursive(basePath)
+  return results
+}
+
+/**
  * Calculate MD5 hash of a file
  * @param {string} filePath - Path to the file
  * @param {Object} options - Options for hashing
@@ -484,17 +536,10 @@ export async function scanDirectory(directory, options = {}) {
     throw new Error(error)
   }
 
-  let files
-  try {
-    files = fs.readdirSync(absolutePath)
-  } catch (err) {
-    const error = `Cannot read directory: ${absolutePath} - ${err.message}`
-    console.error(`[ERROR] ${error}`)
-    throw new Error(error)
-  }
-
-  const romFiles = files.filter(isRomFile)
-  const archiveFiles = files.filter(isArchiveFile)
+  // Recursively find all ROM and archive files
+  const foundFiles = findRomAndArchiveFiles(absolutePath)
+  const romFiles = foundFiles.filter((f) => isRomFile(f.filename))
+  const archiveFiles = foundFiles.filter((f) => isArchiveFile(f.filename))
   const totalFiles = romFiles.length + archiveFiles.length
 
   console.error(
@@ -506,12 +551,14 @@ export async function scanDirectory(directory, options = {}) {
   const tempDirsToCleanup = []
 
   // Process regular ROM files
-  for (const filename of romFiles) {
+  for (const fileInfo of romFiles) {
     processedCount++
-    const filePath = path.join(absolutePath, filename)
+    const filename = fileInfo.filename
+    const filePath = fileInfo.filePath
+    const displayName = fileInfo.relativePath
 
     console.error(
-      `[INFO] [${processedCount}/${totalFiles}] Processing: ${filename}`
+      `[INFO] [${processedCount}/${totalFiles}] Processing: ${displayName}`
     )
 
     try {
@@ -526,7 +573,7 @@ export async function scanDirectory(directory, options = {}) {
       if (!fileStats.isFile()) {
         console.error(`[WARN] Skipping non-file: ${filePath}`)
         results.push({
-          filename,
+          filename: displayName,
           path: filePath,
           hash: null,
           error: "Not a regular file",
@@ -538,7 +585,7 @@ export async function scanDirectory(directory, options = {}) {
       console.error(`[INFO] File size: ${fileSizeMB} MB`)
 
       if (options.onFileStart) {
-        options.onFileStart(filename, fileStats.size)
+        options.onFileStart(displayName, fileStats.size)
       }
 
       const hashStartTime = Date.now()
@@ -549,27 +596,27 @@ export async function scanDirectory(directory, options = {}) {
             const progressPercent = progress.toFixed(1)
             const elapsed = ((Date.now() - hashStartTime) / 1000).toFixed(1)
             console.error(
-              `[DEBUG] ${filename}: ${progressPercent}% (${elapsed}s)`
+              `[DEBUG] ${displayName}: ${progressPercent}% (${elapsed}s)`
             )
           }
         },
       })
 
       const hashTime = ((Date.now() - hashStartTime) / 1000).toFixed(2)
-      console.error(`[INFO] ✓ Hashed ${filename} in ${hashTime}s`)
+      console.error(`[INFO] ✓ Hashed ${displayName} in ${hashTime}s`)
 
       if (options.onFileComplete) {
-        options.onFileComplete(filename, hash)
+        options.onFileComplete(displayName, hash)
       }
 
       results.push({
-        filename,
+        filename: displayName,
         path: filePath,
         hash,
         size: fileStats.size,
       })
     } catch (error) {
-      console.error(`[ERROR] Failed to process ${filename}:`, error.message)
+      console.error(`[ERROR] Failed to process ${displayName}:`, error.message)
       console.error(`[ERROR] File path: ${filePath}`)
       if (error.stack && process.env.DEBUG) {
         console.error(`[ERROR] Stack trace:`, error.stack)
@@ -577,7 +624,7 @@ export async function scanDirectory(directory, options = {}) {
 
       // Skip files we can't read
       results.push({
-        filename,
+        filename: displayName,
         path: filePath,
         hash: null,
         error: error.message,
@@ -586,12 +633,14 @@ export async function scanDirectory(directory, options = {}) {
   }
 
   // Process archive files
-  for (const filename of archiveFiles) {
+  for (const fileInfo of archiveFiles) {
     processedCount++
-    const archivePath = path.join(absolutePath, filename)
+    const filename = fileInfo.filename
+    const archivePath = fileInfo.filePath
+    const displayName = fileInfo.relativePath
 
     console.error(
-      `[INFO] [${processedCount}/${totalFiles}] Processing archive: ${filename}`
+      `[INFO] [${processedCount}/${totalFiles}] Processing archive: ${displayName}`
     )
 
     try {
@@ -626,9 +675,9 @@ export async function scanDirectory(directory, options = {}) {
       const extractedROMs = await extractROMsFromArchive(archivePath)
 
       if (extractedROMs.length === 0) {
-        console.error(`[WARN] No ROM files found in archive: ${filename}`)
+        console.error(`[WARN] No ROM files found in archive: ${displayName}`)
         results.push({
-          filename: `${filename} (archive)`,
+          filename: `${displayName} (archive)`,
           path: archivePath,
           hash: null,
           error: "No ROM files found in archive",
@@ -647,8 +696,8 @@ export async function scanDirectory(directory, options = {}) {
 
       // Hash each extracted ROM
       for (const rom of extractedROMs) {
-        const displayName = `${filename}/${rom.name}`
-        console.error(`[INFO] Processing: ${displayName}`)
+        const romDisplayName = `${displayName}/${rom.name}`
+        console.error(`[INFO] Processing: ${romDisplayName}`)
 
         try {
           let romStats
@@ -659,7 +708,7 @@ export async function scanDirectory(directory, options = {}) {
               `[ERROR] Cannot stat extracted ROM ${rom.path}: ${err.message}`
             )
             results.push({
-              filename: displayName,
+              filename: romDisplayName,
               path: archivePath,
               hash: null,
               error: `Cannot stat extracted ROM: ${err.message}`,
@@ -671,7 +720,7 @@ export async function scanDirectory(directory, options = {}) {
           console.error(`[INFO] File size: ${fileSizeMB} MB`)
 
           if (options.onFileStart) {
-            options.onFileStart(displayName, romStats.size)
+            options.onFileStart(romDisplayName, romStats.size)
           }
 
           const hashStartTime = Date.now()
@@ -681,25 +730,25 @@ export async function scanDirectory(directory, options = {}) {
                 const progressPercent = progress.toFixed(1)
                 const elapsed = ((Date.now() - hashStartTime) / 1000).toFixed(1)
                 console.error(
-                  `[DEBUG] ${displayName}: ${progressPercent}% (${elapsed}s)`
+                  `[DEBUG] ${romDisplayName}: ${progressPercent}% (${elapsed}s)`
                 )
               }
             },
           })
 
           const hashTime = ((Date.now() - hashStartTime) / 1000).toFixed(2)
-          console.error(`[INFO] ✓ Hashed ${displayName} in ${hashTime}s`)
+          console.error(`[INFO] ✓ Hashed ${romDisplayName} in ${hashTime}s`)
 
           if (options.onFileComplete) {
-            options.onFileComplete(displayName, hash)
+            options.onFileComplete(romDisplayName, hash)
           }
 
           results.push({
-            filename: displayName,
+            filename: romDisplayName,
             path: archivePath,
             hash,
             size: romStats.size,
-            archiveName: filename,
+            archiveName: displayName,
             romName: rom.name,
           })
         } catch (error) {
@@ -708,7 +757,7 @@ export async function scanDirectory(directory, options = {}) {
             error.message
           )
           results.push({
-            filename: displayName,
+            filename: romDisplayName,
             path: archivePath,
             hash: null,
             error: error.message,
@@ -717,7 +766,7 @@ export async function scanDirectory(directory, options = {}) {
       }
     } catch (error) {
       console.error(
-        `[ERROR] Failed to process archive ${filename}:`,
+        `[ERROR] Failed to process archive ${displayName}:`,
         error.message
       )
       console.error(`[ERROR] Archive path: ${archivePath}`)
@@ -726,7 +775,7 @@ export async function scanDirectory(directory, options = {}) {
       }
 
       results.push({
-        filename: `${filename} (archive)`,
+        filename: `${displayName} (archive)`,
         path: archivePath,
         hash: null,
         error: error.message,
@@ -769,16 +818,18 @@ export async function listRomFiles(directory) {
     return []
   }
 
-  const files = fs.readdirSync(absolutePath)
-  const romFiles = files.filter(isRomFile)
-  const archiveFiles = files.filter(isArchiveFile)
-  const result = [...romFiles]
+  // Recursively find all ROM and archive files
+  const foundFiles = findRomAndArchiveFiles(absolutePath)
+  const romFiles = foundFiles.filter((f) => isRomFile(f.filename))
+  const archiveFiles = foundFiles.filter((f) => isArchiveFile(f.filename))
+  const result = romFiles.map((f) => f.relativePath)
 
   // List ROMs from archives (without extracting)
-  for (const archiveFile of archiveFiles) {
-    const archivePath = path.join(absolutePath, archiveFile)
+  for (const fileInfo of archiveFiles) {
+    const archivePath = fileInfo.filePath
+    const archiveDisplayName = fileInfo.relativePath
     try {
-      const ext = path.extname(archiveFile).toLowerCase()
+      const ext = path.extname(fileInfo.filename).toLowerCase()
       let romNames = []
 
       if (ext === ".zip") {
@@ -795,7 +846,9 @@ export async function listRomFiles(directory) {
             zipfile.on("entry", (entry) => {
               const entryExt = path.extname(entry.fileName).toLowerCase()
               if (ROM_EXTENSIONS.has(entryExt)) {
-                roms.push(`${archiveFile}/${path.basename(entry.fileName)}`)
+                roms.push(
+                  `${archiveDisplayName}/${path.basename(entry.fileName)}`
+                )
               }
               zipfile.readEntry()
             })
@@ -827,7 +880,9 @@ export async function listRomFiles(directory) {
             if (entry.attr && entry.attr.includes("D")) continue // Skip directories
             const entryExt = path.extname(entry.name).toLowerCase()
             if (ROM_EXTENSIONS.has(entryExt)) {
-              romNames.push(`${archiveFile}/${path.basename(entry.name)}`)
+              romNames.push(
+                `${archiveDisplayName}/${path.basename(entry.name)}`
+              )
             }
           }
         } catch (err) {
@@ -837,7 +892,7 @@ export async function listRomFiles(directory) {
         // For RAR, we'd need to read the file to list contents
         // For now, just indicate the archive exists
         // Full extraction will happen during scanning
-        romNames.push(`${archiveFile}/*`)
+        romNames.push(`${archiveDisplayName}/*`)
       }
 
       result.push(...romNames)
@@ -845,7 +900,7 @@ export async function listRomFiles(directory) {
       // Skip archives we can't read
       if (process.env.DEBUG) {
         console.error(
-          `[DEBUG] Could not list contents of ${archiveFile}: ${err.message}`
+          `[DEBUG] Could not list contents of ${archiveDisplayName}: ${err.message}`
         )
       }
     }
