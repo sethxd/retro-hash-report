@@ -110,24 +110,133 @@ function isRomOrArchiveFile(filename) {
 }
 
 /**
+ * Find 7zip executable in PATH or common locations
+ * @returns {Promise<string|null>} Path to 7zip executable or null if not found
+ */
+async function find7zipExecutable() {
+  const platform = os.platform()
+  const possibleNames =
+    platform === "win32"
+      ? ["7z.exe", "7za.exe", "7zr.exe"]
+      : ["7z", "7za", "7zr", "p7zip"]
+
+  // First, try the node-7z detected path
+  try {
+    const sevenZipPath = Seven["7zPath"]
+    if (sevenZipPath && fs.existsSync(sevenZipPath)) {
+      // Verify it works
+      try {
+        execSync(`"${sevenZipPath}" --help`, { stdio: "ignore", timeout: 5000 })
+        return sevenZipPath
+      } catch (err) {
+        // Path exists but doesn't work, continue searching
+      }
+    }
+  } catch (err) {
+    // node-7z path not available, continue searching
+  }
+
+  // Search in PATH
+  const pathEnv = process.env.PATH || ""
+  const pathDirs = pathEnv.split(path.delimiter)
+
+  for (const dir of pathDirs) {
+    for (const name of possibleNames) {
+      const fullPath = path.join(dir, name)
+      try {
+        if (fs.existsSync(fullPath)) {
+          // Verify it works
+          try {
+            execSync(`"${fullPath}" --help`, { stdio: "ignore", timeout: 5000 })
+            return fullPath
+          } catch (err) {
+            // File exists but doesn't work, try next
+            continue
+          }
+        }
+      } catch (err) {
+        // Skip if we can't check
+        continue
+      }
+    }
+  }
+
+  // Try common installation locations on Windows
+  if (platform === "win32") {
+    const commonPaths = [
+      "C:\\Program Files\\7-Zip\\7z.exe",
+      "C:\\Program Files (x86)\\7-Zip\\7z.exe",
+      path.join(
+        os.homedir(),
+        "AppData",
+        "Local",
+        "Programs",
+        "7-Zip",
+        "7z.exe"
+      ),
+    ]
+
+    for (const commonPath of commonPaths) {
+      try {
+        if (fs.existsSync(commonPath)) {
+          try {
+            execSync(`"${commonPath}" --help`, {
+              stdio: "ignore",
+              timeout: 5000,
+            })
+            return commonPath
+          } catch (err) {
+            continue
+          }
+        }
+      } catch (err) {
+        continue
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Get the 7zip executable path, caching the result
+ */
+let cached7zipPath = null
+let pathCheckPromise = null
+
+async function get7zipPath() {
+  if (cached7zipPath !== null) {
+    return cached7zipPath
+  }
+
+  if (pathCheckPromise) {
+    return pathCheckPromise
+  }
+
+  pathCheckPromise = find7zipExecutable()
+  cached7zipPath = await pathCheckPromise
+  return cached7zipPath
+}
+
+/**
  * Check if 7zip command line tool is available
  * @returns {Promise<boolean>} True if 7zip is available, false otherwise
  */
 export async function is7zipAvailable() {
   try {
-    // Check if Seven["7zPath"] exists and is accessible
-    const sevenZipPath = Seven["7zPath"]
-    if (!sevenZipPath) {
-      return false
-    }
-
-    // Try to execute 7z to verify it works
-    // Use a simple command that should work on all platforms
-    execSync(`"${sevenZipPath}" --help`, { stdio: "ignore" })
-    return true
+    const sevenZipPath = await get7zipPath()
+    return sevenZipPath !== null
   } catch (error) {
     return false
   }
+}
+
+/**
+ * Get the path to the 7zip executable (for debugging/info)
+ * @returns {Promise<string|null>} Path to 7zip executable or null if not found
+ */
+export async function get7zipExecutablePath() {
+  return await get7zipPath()
 }
 
 /**
@@ -480,8 +589,17 @@ async function extractROMsFrom7z(archivePath) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ra-hash-"))
 
   try {
+    // Get the 7zip executable path (with fallback detection)
+    const sevenZipPath = await get7zipPath()
+    if (!sevenZipPath) {
+      throw new Error(
+        "7-Zip executable not found. Please ensure 7-Zip is installed and in your PATH."
+      )
+    }
+
     // List archive contents first
-    const myStream = Seven.list(archivePath)
+    const listOptions = sevenZipPath ? { $bin: sevenZipPath } : {}
+    const myStream = Seven.list(archivePath, listOptions)
     const entries = []
 
     await new Promise((resolve, reject) => {
@@ -507,7 +625,7 @@ async function extractROMsFrom7z(archivePath) {
     // Extract ROM files - extract all ROMs at once
     const romFileNames = romEntries.map((e) => e.name)
     const extractStream = Seven.extract(archivePath, tempDir, {
-      $bin: Seven["7zPath"],
+      $bin: sevenZipPath,
       $raw: romFileNames,
     })
 
@@ -982,7 +1100,9 @@ export async function listRomFiles(directory) {
       } else if (ext === ".7z") {
         // For 7Z, use node-7z to list contents
         try {
-          const myStream = Seven.list(archivePath)
+          const sevenZipPath = await get7zipPath()
+          const listOptions = sevenZipPath ? { $bin: sevenZipPath } : {}
+          const myStream = Seven.list(archivePath, listOptions)
           const entries = []
 
           await new Promise((resolve, reject) => {

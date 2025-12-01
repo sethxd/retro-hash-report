@@ -12,6 +12,7 @@ import {
   listRomFiles,
   has7zFiles,
   is7zipAvailable,
+  get7zipExecutablePath,
 } from "./scanner.js"
 import {
   displayResults,
@@ -70,6 +71,13 @@ async function main() {
             "⚠️  7-Zip archive files (.7z) detected in the directory."
           )
         )
+
+        // Try to get the path for debugging
+        const detectedPath = await get7zipExecutablePath()
+        if (detectedPath && process.env.DEBUG) {
+          console.log(chalk.dim(`\n[DEBUG] Detected 7-Zip at: ${detectedPath}`))
+        }
+
         console.log(
           chalk.dim(
             "\nTo scan 7-Zip archives, you need to install the 7-Zip command line tool."
@@ -80,11 +88,20 @@ async function main() {
             "\nInstallation instructions:\n" +
               "  Windows: Download from https://www.7-zip.org/download.html\n" +
               "           Install and ensure 7z.exe is in your PATH\n" +
+              "           Or add 7-Zip installation directory to PATH\n" +
               "  macOS:   brew install p7zip\n" +
               "  Linux:   sudo apt-get install p7zip-full (Debian/Ubuntu)\n" +
               "           sudo yum install p7zip (RHEL/CentOS)"
           )
         )
+
+        if (process.env.DEBUG) {
+          console.log(
+            chalk.dim(
+              `\n[DEBUG] Current PATH: ${process.env.PATH || "not set"}`
+            )
+          )
+        }
 
         const answer = await inquirer.prompt([
           {
