@@ -187,7 +187,25 @@ export function calculateMD5(filePath, options = {}) {
       return
     }
 
-    const stream = fs.createReadStream(filePath)
+    // Use larger buffer size for better performance on large files
+    // Default Node.js stream buffer is 64KB, which is inefficient for large .iso files
+    // We'll use progressively larger buffers based on file size:
+    // - 4MB for files > 1GB (typical for DVD .iso files)
+    // - 2MB for files > 100MB
+    // - 1MB for files > 10MB
+    // - 64KB for smaller files
+    const bufferSize =
+      fileSize > 1024 * 1024 * 1024
+        ? 4 * 1024 * 1024 // 4MB for files > 1GB (DVD .iso files)
+        : fileSize > 100 * 1024 * 1024
+        ? 2 * 1024 * 1024 // 2MB for files > 100MB
+        : fileSize > 10 * 1024 * 1024
+        ? 1024 * 1024 // 1MB for files > 10MB
+        : 64 * 1024 // 64KB for smaller files
+
+    const stream = fs.createReadStream(filePath, {
+      highWaterMark: bufferSize,
+    })
 
     // Set up timeout (30 minutes for very large files)
     const timeout = setTimeout(() => {
