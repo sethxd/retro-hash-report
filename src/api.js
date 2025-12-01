@@ -46,6 +46,7 @@ export async function getGameHashes(authorization, consoleId) {
   const games = await getGameList(authorization, {
     consoleId: consoleId,
     shouldOnlyRetrieveGamesWithAchievements: true,
+    shouldRetrieveGameHashes: true,
   })
 
   // Build a hash lookup map for efficient searching
@@ -80,6 +81,7 @@ export async function getGameStats(authorization, consoleId) {
   const games = await getGameList(authorization, {
     consoleId: consoleId,
     shouldOnlyRetrieveGamesWithAchievements: true,
+    shouldRetrieveGameHashes: true,
   })
 
   let hashCount = 0
