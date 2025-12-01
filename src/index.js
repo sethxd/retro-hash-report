@@ -40,7 +40,7 @@ async function main() {
 
     // Step 2: Check ROM directory
     const romDirectory = options.path
-    const romFiles = listRomFiles(romDirectory)
+    const romFiles = await listRomFiles(romDirectory)
 
     if (romFiles.length === 0) {
       displayError(`No ROM files found in: ${romDirectory}`)
@@ -71,8 +71,8 @@ async function main() {
       process.exit(1)
     }
 
-    // Step 4: Suggest console based on ROM extensions
-    const suggestedConsole = suggestConsole(romFiles, consoles)
+    // Step 4: Suggest console based on folder name and ROM extensions
+    const suggestedConsole = suggestConsole(romDirectory, romFiles, consoles)
 
     // Step 5: Select console
     let selectedConsole
@@ -90,7 +90,7 @@ async function main() {
       // Show suggestion with y/n confirmation
       console.log(
         chalk.yellow(
-          `💡 Suggested console based on ROM extensions: ${suggestedConsole.name} (ID: ${suggestedConsole.id})\n`
+          `💡 Suggested console based on folder name and ROM extensions: ${suggestedConsole.name} (ID: ${suggestedConsole.id})\n`
         )
       )
 
@@ -170,10 +170,29 @@ async function main() {
     let scannedRoms
 
     try {
-      scannedRoms = await scanDirectory(romDirectory)
+      // Enable debug logging if DEBUG env var is set
+      if (process.env.DEBUG) {
+        console.error(chalk.dim("\n[DEBUG MODE] Detailed logging enabled\n"))
+      }
+
+      scannedRoms = await scanDirectory(romDirectory, {
+        onFileStart: (filename, size) => {
+          if (!process.env.DEBUG) {
+            // Update spinner text with current file being processed
+            spinner.text = `Calculating ROM hashes... (${filename})`
+          }
+        },
+        onFileComplete: (filename, hash) => {
+          // Progress updates are handled by scanDirectory logging
+        },
+      })
       spinner.succeed(`Hashed ${scannedRoms.length} ROM files`)
     } catch (error) {
       spinner.fail("Failed to scan ROMs")
+      console.error(chalk.red(`\n[ERROR] Scan failed: ${error.message}`))
+      if (error.stack && process.env.DEBUG) {
+        console.error(chalk.red(`[ERROR] Stack trace:\n${error.stack}`))
+      }
       displayError(error.message)
       process.exit(1)
     }
