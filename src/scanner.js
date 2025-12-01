@@ -3,6 +3,7 @@ import path from "path"
 import crypto from "crypto"
 import os from "os"
 import { promisify } from "util"
+import { execSync } from "child_process"
 import yauzl from "yauzl"
 import Seven from "node-7z"
 import { createExtractorFromData } from "node-unrar-js"
@@ -109,6 +110,40 @@ function isRomOrArchiveFile(filename) {
 }
 
 /**
+ * Check if 7zip command line tool is available
+ * @returns {Promise<boolean>} True if 7zip is available, false otherwise
+ */
+export async function is7zipAvailable() {
+  try {
+    // Check if Seven["7zPath"] exists and is accessible
+    const sevenZipPath = Seven["7zPath"]
+    if (!sevenZipPath) {
+      return false
+    }
+
+    // Try to execute 7z to verify it works
+    // Use a simple command that should work on all platforms
+    execSync(`"${sevenZipPath}" --help`, { stdio: "ignore" })
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+/**
+ * Check if directory contains any .7z files
+ * @param {string} directory - Directory path to check
+ * @returns {boolean} True if directory contains .7z files
+ */
+export function has7zFiles(directory) {
+  const absolutePath = path.resolve(directory)
+  const foundFiles = findRomAndArchiveFiles(absolutePath)
+  return foundFiles.some(
+    (f) => path.extname(f.filename).toLowerCase() === ".7z"
+  )
+}
+
+/**
  * Recursively find all ROM and archive files in a directory
  * @param {string} directory - Directory path to scan
  * @returns {Array<{filename: string, filePath: string, relativePath: string}>} Array of file info objects
@@ -161,112 +196,176 @@ function findRomAndArchiveFiles(directory) {
 }
 
 /**
- * Calculate MD5 hash of a file
+ * Calculate MD5 hash of a file using fs.promises for better performance on large files
  * @param {string} filePath - Path to the file
  * @param {Object} options - Options for hashing
  * @param {Function} options.onProgress - Optional callback for progress updates
  * @returns {Promise<string>} MD5 hash in lowercase hex
  */
-export function calculateMD5(filePath, options = {}) {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now()
-    const hash = crypto.createHash("md5")
-    let bytesRead = 0
+export async function calculateMD5(filePath, options = {}) {
+  const startTime = Date.now()
+  const hash = crypto.createHash("md5")
+  let bytesRead = 0
 
-    // Get file size for progress tracking
-    let fileSize = 0
+  // Get file size for progress tracking
+  let fileSize = 0
+  let stats
+  try {
+    stats = await fs.promises.stat(filePath)
+    fileSize = stats.size
+  } catch (err) {
+    console.error(
+      `[ERROR] Failed to get file stats for ${filePath}:`,
+      err.message
+    )
+    throw new Error(`Cannot read file stats: ${err.message}`)
+  }
+
+  // Use optimized buffer sizes for better performance on large files
+  // For very large files (>100MB), use fs.promises.open with manual reading
+  // which is faster than streams due to less overhead
+  const useDirectRead = fileSize > 100 * 1024 * 1024 // 100MB threshold
+
+  // Determine optimal buffer size based on file size
+  // Larger buffers = fewer system calls = better performance for large files
+  const bufferSize =
+    fileSize > 4 * 1024 * 1024 * 1024
+      ? 16 * 1024 * 1024 // 16MB for files > 4GB (dual-layer DVD .iso files)
+      : fileSize > 2 * 1024 * 1024 * 1024
+      ? 12 * 1024 * 1024 // 12MB for files > 2GB
+      : fileSize > 1024 * 1024 * 1024
+      ? 8 * 1024 * 1024 // 8MB for files > 1GB (DVD .iso files, large .rvz files)
+      : fileSize > 500 * 1024 * 1024
+      ? 4 * 1024 * 1024 // 4MB for files > 500MB
+      : fileSize > 100 * 1024 * 1024
+      ? 2 * 1024 * 1024 // 2MB for files > 100MB
+      : fileSize > 10 * 1024 * 1024
+      ? 1024 * 1024 // 1MB for files > 10MB
+      : 64 * 1024 // 64KB for smaller files
+
+  // Progress reporting throttling for large files (report every 5% or 100MB, whichever is smaller)
+  const progressInterval = Math.min(fileSize * 0.05, 100 * 1024 * 1024)
+  let lastProgressReport = 0
+
+  if (useDirectRead) {
+    // Use fs.promises.open for better performance on large files
+    let fileHandle
     try {
-      const stats = fs.statSync(filePath)
-      fileSize = stats.size
+      fileHandle = await fs.promises.open(filePath, "r")
+      const buffer = Buffer.allocUnsafe(bufferSize)
+
+      while (bytesRead < fileSize) {
+        const bytesToRead = Math.min(bufferSize, fileSize - bytesRead)
+        const { bytesRead: chunkSize } = await fileHandle.read(
+          buffer,
+          0,
+          bytesToRead,
+          bytesRead
+        )
+
+        if (chunkSize === 0) {
+          break // EOF
+        }
+
+        hash.update(buffer.subarray(0, chunkSize))
+        bytesRead += chunkSize
+
+        // Throttled progress reporting for large files
+        if (options.onProgress && fileSize > 0) {
+          const progressSinceLastReport = bytesRead - lastProgressReport
+          if (
+            progressSinceLastReport >= progressInterval ||
+            bytesRead === fileSize
+          ) {
+            const progress = (bytesRead / fileSize) * 100
+            options.onProgress(progress, bytesRead, fileSize)
+            lastProgressReport = bytesRead
+          }
+        }
+      }
+
+      await fileHandle.close()
     } catch (err) {
-      console.error(
-        `[ERROR] Failed to get file stats for ${filePath}:`,
-        err.message
-      )
-      reject(new Error(`Cannot read file stats: ${err.message}`))
-      return
+      if (fileHandle) {
+        await fileHandle.close().catch(() => {})
+      }
+      console.error(`[ERROR] Error while hashing ${filePath}:`, err.message)
+      throw new Error(`Failed to hash file: ${err.message}`)
     }
+  } else {
+    // Use streams for smaller files (less overhead than manual reading)
+    return new Promise((resolve, reject) => {
+      const stream = fs.createReadStream(filePath, {
+        highWaterMark: bufferSize,
+      })
 
-    // Use larger buffer size for better performance on large files
-    // Default Node.js stream buffer is 64KB, which is inefficient for large .iso files
-    // We'll use progressively larger buffers based on file size:
-    // - 4MB for files > 1GB (typical for DVD .iso files)
-    // - 2MB for files > 100MB
-    // - 1MB for files > 10MB
-    // - 64KB for smaller files
-    const bufferSize =
-      fileSize > 1024 * 1024 * 1024
-        ? 4 * 1024 * 1024 // 4MB for files > 1GB (DVD .iso files)
-        : fileSize > 100 * 1024 * 1024
-        ? 2 * 1024 * 1024 // 2MB for files > 100MB
-        : fileSize > 10 * 1024 * 1024
-        ? 1024 * 1024 // 1MB for files > 10MB
-        : 64 * 1024 // 64KB for smaller files
-
-    const stream = fs.createReadStream(filePath, {
-      highWaterMark: bufferSize,
-    })
-
-    // Set up timeout (30 minutes for very large files)
-    const timeout = setTimeout(() => {
-      stream.destroy()
-      reject(
-        new Error(`Timeout: File hashing exceeded 30 minutes for ${filePath}`)
-      )
-    }, 30 * 60 * 1000)
-
-    stream.on("data", (data) => {
-      bytesRead += data.length
-      hash.update(data)
-
-      // Report progress if callback provided
-      if (options.onProgress && fileSize > 0) {
-        const progress = (bytesRead / fileSize) * 100
-        options.onProgress(progress, bytesRead, fileSize)
-      }
-    })
-
-    stream.on("end", () => {
-      clearTimeout(timeout)
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
-      const hashValue = hash.digest("hex").toLowerCase()
-
-      if (process.env.DEBUG) {
-        console.log(
-          `[DEBUG] Hashed ${path.basename(filePath)} (${(
-            fileSize /
-            1024 /
-            1024
-          ).toFixed(2)} MB) in ${elapsed}s`
+      // Set up timeout (30 minutes for very large files)
+      const timeout = setTimeout(() => {
+        stream.destroy()
+        reject(
+          new Error(`Timeout: File hashing exceeded 30 minutes for ${filePath}`)
         )
-      }
+      }, 30 * 60 * 1000)
 
-      resolve(hashValue)
-    })
+      stream.on("data", (data) => {
+        bytesRead += data.length
+        hash.update(data)
 
-    stream.on("error", (err) => {
-      clearTimeout(timeout)
-      console.error(
-        `[ERROR] Stream error while hashing ${filePath}:`,
-        err.message
-      )
-      console.error(
-        `[ERROR] Error code: ${err.code}, Error syscall: ${err.syscall}`
-      )
-      reject(
-        new Error(
-          `Failed to read file stream: ${err.message} (code: ${err.code})`
+        // Report progress if callback provided
+        if (options.onProgress && fileSize > 0) {
+          const progress = (bytesRead / fileSize) * 100
+          options.onProgress(progress, bytesRead, fileSize)
+        }
+      })
+
+      stream.on("end", () => {
+        clearTimeout(timeout)
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+        const hashValue = hash.digest("hex").toLowerCase()
+
+        if (process.env.DEBUG) {
+          console.log(
+            `[DEBUG] Hashed ${path.basename(filePath)} (${(
+              fileSize /
+              1024 /
+              1024
+            ).toFixed(2)} MB) in ${elapsed}s`
+          )
+        }
+
+        resolve(hashValue)
+      })
+
+      stream.on("error", (err) => {
+        clearTimeout(timeout)
+        console.error(
+          `[ERROR] Stream error while hashing ${filePath}:`,
+          err.message
         )
-      )
+        reject(
+          new Error(
+            `Failed to read file stream: ${err.message} (code: ${err.code})`
+          )
+        )
+      })
     })
+  }
 
-    // Handle case where file doesn't exist or can't be opened
-    stream.on("open", () => {
-      if (process.env.DEBUG) {
-        console.log(`[DEBUG] Started hashing: ${path.basename(filePath)}`)
-      }
-    })
-  })
+  // For direct read path, calculate and return hash
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+  const hashValue = hash.digest("hex").toLowerCase()
+
+  if (process.env.DEBUG) {
+    console.log(
+      `[DEBUG] Hashed ${path.basename(filePath)} (${(
+        fileSize /
+        1024 /
+        1024
+      ).toFixed(2)} MB) in ${elapsed}s`
+    )
+  }
+
+  return hashValue
 }
 
 /**

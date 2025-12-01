@@ -7,7 +7,12 @@ import chalk from "chalk"
 
 import { getCredentials } from "./config.js"
 import { createAuthorization, getConsoles, getGameHashes } from "./api.js"
-import { scanDirectory, listRomFiles } from "./scanner.js"
+import {
+  scanDirectory,
+  listRomFiles,
+  has7zFiles,
+  is7zipAvailable,
+} from "./scanner.js"
 import {
   displayResults,
   displayHeader,
@@ -55,6 +60,56 @@ async function main() {
     console.log(
       chalk.dim(`Found ${romFiles.length} ROM file(s) in ${romDirectory}\n`)
     )
+
+    // Step 2.5: Check for 7z files and 7zip availability
+    if (has7zFiles(romDirectory)) {
+      const sevenZipAvailable = await is7zipAvailable()
+      if (!sevenZipAvailable) {
+        console.log(
+          chalk.yellow(
+            "⚠️  7-Zip archive files (.7z) detected in the directory."
+          )
+        )
+        console.log(
+          chalk.dim(
+            "\nTo scan 7-Zip archives, you need to install the 7-Zip command line tool."
+          )
+        )
+        console.log(
+          chalk.dim(
+            "\nInstallation instructions:\n" +
+              "  Windows: Download from https://www.7-zip.org/download.html\n" +
+              "           Install and ensure 7z.exe is in your PATH\n" +
+              "  macOS:   brew install p7zip\n" +
+              "  Linux:   sudo apt-get install p7zip-full (Debian/Ubuntu)\n" +
+              "           sudo yum install p7zip (RHEL/CentOS)"
+          )
+        )
+
+        const answer = await inquirer.prompt([
+          {
+            type: "confirm",
+            name: "continue",
+            message:
+              "Continue scanning anyway? (7-Zip archives will be skipped)",
+            default: false,
+          },
+        ])
+
+        if (!answer.continue) {
+          console.log(
+            chalk.dim("\nScan cancelled. Please install 7-Zip and try again.")
+          )
+          process.exit(0)
+        }
+
+        console.log(
+          chalk.yellow(
+            "\n⚠️  Continuing scan without 7-Zip support. .7z files will be skipped.\n"
+          )
+        )
+      }
+    }
 
     // Step 3: Fetch consoles
     let spinner = ora("Fetching console list from RetroAchievements...").start()
