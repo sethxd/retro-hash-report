@@ -7,7 +7,7 @@ import chalk from "chalk"
 
 import { getCredentials } from "./config.js"
 import { createAuthorization, getConsoles, getGameHashes } from "./api.js"
-import { scanDirectory, listRomFiles } from "./scanner.js"
+import { scanDirectory, listRomFiles, suggestConsole } from "./scanner.js"
 import {
   displayResults,
   displayHeader,
@@ -71,7 +71,10 @@ async function main() {
       process.exit(1)
     }
 
-    // Step 4: Select console
+    // Step 4: Suggest console based on ROM extensions
+    const suggestedConsole = suggestConsole(romFiles, consoles)
+
+    // Step 5: Select console
     let selectedConsole
 
     if (options.system) {
@@ -83,8 +86,47 @@ async function main() {
         displayError(`System ID ${systemId} not found`)
         process.exit(1)
       }
+    } else if (suggestedConsole) {
+      // Show suggestion with y/n confirmation
+      console.log(
+        chalk.yellow(
+          `💡 Suggested console based on ROM extensions: ${suggestedConsole.name} (ID: ${suggestedConsole.id})\n`
+        )
+      )
+
+      const confirmAnswer = await inquirer.prompt([
+        {
+          type: "confirm",
+          name: "useSuggested",
+          message: `Use ${suggestedConsole.name}?`,
+          default: true,
+        },
+      ])
+
+      if (confirmAnswer.useSuggested) {
+        selectedConsole = suggestedConsole
+      } else {
+        // Show full selection list
+        const choices = consoles.map((c) => ({
+          name: `${c.name} (ID: ${c.id})`,
+          value: c,
+        }))
+
+        const answer = await inquirer.prompt([
+          {
+            type: "list",
+            name: "console",
+            message: "Select the system for your ROMs:",
+            choices,
+            pageSize: 15,
+            loop: false,
+          },
+        ])
+
+        selectedConsole = answer.console
+      }
     } else {
-      // Prompt user to select
+      // No suggestion available, show full selection list
       const choices = consoles.map((c) => ({
         name: `${c.name} (ID: ${c.id})`,
         value: c,
@@ -106,7 +148,7 @@ async function main() {
 
     console.log(chalk.cyan(`\nSelected: ${selectedConsole.name}\n`))
 
-    // Step 5: Fetch game hashes for selected console
+    // Step 6: Fetch game hashes for selected console
     spinner = ora(`Fetching game data for ${selectedConsole.name}...`).start()
     let hashMap
 
@@ -121,7 +163,7 @@ async function main() {
       process.exit(1)
     }
 
-    // Step 6: Scan ROMs and calculate hashes
+    // Step 7: Scan ROMs and calculate hashes
     displayScanInfo(romDirectory, romFiles.length, selectedConsole.name)
 
     spinner = ora("Calculating ROM hashes...").start()
@@ -136,7 +178,7 @@ async function main() {
       process.exit(1)
     }
 
-    // Step 7: Compare hashes
+    // Step 8: Compare hashes
     spinner = ora("Comparing against RetroAchievements database...").start()
 
     const results = scannedRoms.map((rom) => {
@@ -163,7 +205,7 @@ async function main() {
       `Comparison complete: ${matchedCount}/${results.length} matches found`
     )
 
-    // Step 8: Display results
+    // Step 9: Display results
     displayResults(results, { consoleName: selectedConsole.name })
 
     // Additional info

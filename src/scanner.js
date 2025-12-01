@@ -158,3 +158,139 @@ export function formatSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB"
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB"
 }
+
+/**
+ * Mapping of file extensions to RetroAchievements console names
+ * This maps common ROM extensions to console names as they appear in the RA API
+ */
+const EXTENSION_TO_CONSOLE = {
+  // Nintendo
+  ".nes": ["Nintendo Entertainment System", "NES"],
+  ".fds": ["Nintendo Entertainment System", "NES"],
+  ".sfc": ["Super Nintendo Entertainment System", "SNES"],
+  ".smc": ["Super Nintendo Entertainment System", "SNES"],
+  ".gb": ["Game Boy", "GB"],
+  ".gbc": ["Game Boy Color", "GBC"],
+  ".gba": ["Game Boy Advance", "GBA"],
+  ".nds": ["Nintendo DS", "NDS"],
+  ".n64": ["Nintendo 64", "N64"],
+  ".z64": ["Nintendo 64", "N64"],
+  ".v64": ["Nintendo 64", "N64"],
+
+  // Sega
+  ".md": ["Mega Drive", "Genesis"],
+  ".smd": ["Mega Drive", "Genesis"],
+  ".gen": ["Mega Drive", "Genesis"],
+  ".bin": ["Mega Drive", "Genesis"], // Common for Genesis
+  ".gg": ["Game Gear", "GG"],
+  ".sms": ["Master System", "SMS"],
+  ".32x": ["32X", "Sega 32X"],
+  ".sg": ["SG-1000", "SG1000"],
+
+  // Sony
+  ".iso": ["PlayStation", "PSX"], // Could also be PSP, but PSX is more common
+  ".cue": ["PlayStation", "PSX"],
+  ".chd": ["PlayStation", "PSX"],
+
+  // Atari
+  ".a26": ["Atari 2600", "A26"],
+  ".a78": ["Atari 7800", "A78"],
+  ".lnx": ["Atari Lynx", "Lynx"],
+  ".jag": ["Atari Jaguar", "Jaguar"],
+
+  // Other
+  ".pce": ["TurboGrafx-16", "PC Engine"],
+  ".ngp": ["Neo Geo Pocket", "NGP"],
+  ".ngc": ["Neo Geo Pocket Color", "NGPC"],
+  ".ws": ["WonderSwan", "WS"],
+  ".wsc": ["WonderSwan Color", "WSC"],
+  ".col": ["ColecoVision", "CV"],
+  ".int": ["Intellivision", "INT"],
+  ".vec": ["Vectrex", "VEC"],
+  ".min": ["Pokemon Mini", "PM"],
+  ".vb": ["Virtual Boy", "VB"],
+}
+
+/**
+ * Suggest a console based on ROM file extensions found
+ * @param {Array<string>} romFiles - Array of ROM filenames
+ * @param {Array<Object>} consoles - Array of console objects from RA API
+ * @returns {Object|null} Suggested console object or null if no match
+ */
+export function suggestConsole(romFiles, consoles) {
+  if (
+    !romFiles ||
+    romFiles.length === 0 ||
+    !consoles ||
+    consoles.length === 0
+  ) {
+    return null
+  }
+
+  // Count extensions found
+  const extensionCounts = new Map()
+
+  for (const filename of romFiles) {
+    const ext = path.extname(filename).toLowerCase()
+    extensionCounts.set(ext, (extensionCounts.get(ext) || 0) + 1)
+  }
+
+  // Find the most common extension
+  let mostCommonExt = null
+  let maxCount = 0
+
+  for (const [ext, count] of extensionCounts) {
+    if (count > maxCount) {
+      maxCount = count
+      mostCommonExt = ext
+    }
+  }
+
+  if (!mostCommonExt || !EXTENSION_TO_CONSOLE[mostCommonExt]) {
+    return null
+  }
+
+  // Get possible console names for this extension
+  const possibleNames = EXTENSION_TO_CONSOLE[mostCommonExt]
+
+  // Try to find a matching console (case-insensitive, partial match)
+  for (const console of consoles) {
+    const consoleNameLower = console.name.toLowerCase().trim()
+
+    for (const possibleName of possibleNames) {
+      const possibleLower = possibleName.toLowerCase().trim()
+
+      // Direct substring match
+      if (
+        consoleNameLower.includes(possibleLower) ||
+        possibleLower.includes(consoleNameLower)
+      ) {
+        return console
+      }
+
+      // Handle common variations (e.g., "Nintendo Entertainment System" vs "NES")
+      // Remove common words and compare
+      const consoleWords = consoleNameLower
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+      const possibleWords = possibleLower
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+
+      // Check if significant words match
+      const matchingWords = consoleWords.filter((w) =>
+        possibleWords.some((pw) => pw.includes(w) || w.includes(pw))
+      )
+
+      if (
+        matchingWords.length > 0 &&
+        matchingWords.length >=
+          Math.min(consoleWords.length, possibleWords.length) / 2
+      ) {
+        return console
+      }
+    }
+  }
+
+  return null
+}
