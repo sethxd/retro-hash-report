@@ -29,8 +29,9 @@ export function displayResults(results, options = {}) {
       chalk.bold.white("ROM File"),
       chalk.bold.white("RA Match"),
       chalk.bold.white("Achievements"),
+      chalk.bold.white("Game URL"),
     ],
-    colWidths: [35, 28, 14],
+    colWidths: [40, 35, 12, 40],
     style: {
       head: [],
       border: ["gray"],
@@ -64,14 +65,16 @@ export function displayResults(results, options = {}) {
 
   // Add matched rows
   for (const result of sortedMatched) {
-    const filename = truncateString(result.filename, 33)
-    const title = truncateString(result.match.title, 26)
+    const filename = truncateString(result.filename, 38)
+    const title = truncateString(result.match.title, 33)
     const achievements = result.match.numAchievements
+    const gameUrl = `https://retroachievements.org/game/${result.match.id}`
 
     table.push([
       chalk.green(filename),
       chalk.green(title),
       chalk.green.bold(achievements.toString()),
+      chalk.cyan(gameUrl),
     ])
   }
 
@@ -79,14 +82,16 @@ export function displayResults(results, options = {}) {
   for (const result of sortedUnmatched) {
     if (result.error) {
       table.push([
-        chalk.red(truncateString(result.filename, 33)),
+        chalk.red(truncateString(result.filename, 38)),
         chalk.red("⚠ Error reading file"),
+        chalk.dim("-"),
         chalk.dim("-"),
       ])
     } else {
       table.push([
-        chalk.yellow(truncateString(result.filename, 33)),
+        chalk.yellow(truncateString(result.filename, 38)),
         chalk.yellow("✗ No match found"),
+        chalk.dim("-"),
         chalk.dim("-"),
       ])
     }
